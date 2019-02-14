@@ -1,0 +1,170 @@
+.nolist
+    #include    "ti83plus.inc"
+.list
+.org	$9D93
+.db		t2ByteTok, tAsmCmp
+
+time: .db 1					;used to store time per bit
+
+;*****PROGRAM EXECUTION STARTS HERE
+
+start:
+	DI						;turn interrupts off
+	call	turn_on			;serial line default state
+	b_call(_ClrLCDFull)		;clear the screen
+	
+forever:
+	ld		de, time		;de stores timing for get_byte routine
+	call	get_byte
+
+	LD     A, 3
+    LD     (CurRow), A		;set row 3
+    LD     A, 4
+    LD     (CurCol), A		;set column 4
+	b_call(_ClrLCDFull)
+	
+	LD	HL, 0
+	ld	l, c
+    b_call(_DispHL)			;display what was received
+	
+	ld		b, 255			;wait a bit
+	call	long_delay
+	
+	b_call(_ClrLCDFull)		;clear screen
+	
+	ld		a, c			;see if we are receiving an a
+	cp		97
+	jr		z, success		;if we receive an a, then we have the right timing
+	
+	ld		a, (time)		;increment time var
+	inc		a
+	ld		(time), a
+	
+	jr		forever			;keep doing it until success
+	
+success:
+	LD     A, 3
+    LD     (CurRow), A		;set row 3
+    LD     A, 4
+    LD     (CurCol), A		;set column 4
+	b_call(_ClrLCDFull)
+	LD	HL, 1337			;ha, what can i say?
+    b_call(_DispHL)			;show the user we succeeded
+	
+	ld		b, 255			;delay for a very long time
+	call	long_delay
+	ld		b, 255
+	call	long_delay
+	ld		b, 255
+	call	long_delay
+	ld		b, 255
+	call	long_delay
+	
+	LD     A, 3
+    LD     (CurRow), A		;set row 3
+    LD     A, 4
+    LD     (CurCol), A		;set column 4
+	b_call(_ClrLCDFull)
+	LD	HL, 0
+	ld	a, (time)
+	ld	l, a
+    b_call(_DispHL)			;display the correct timing amount
+	
+	ld		b, 255			;delay for a very long time
+	call	long_delay
+	ld		b, 255
+	call	long_delay
+	ld		b, 255
+	call	long_delay
+	ld		b, 255
+	call	long_delay
+	
+	jr		success			;show correct time forever
+	
+;**************************************************************
+;* get_byte-waits for serial byte to be received
+;* stores to register C
+;**************************************************************
+get_byte:
+	ld		c, 0			;for the data
+	ld		b, 8			;counter
+get_byte0:
+	in		a, (0)			;11 loop until data start detected
+	bit		0, a			;8	check red wire
+	jr		NZ, get_byte0	;12 or 7
+	call	uart_delay		;(time-1)*14+39
+get_byte1
+	call	uart_delay		;(time-1)*14+39
+	call	uart_delay		;(time-1)*14+39
+	
+	in		a, (0)			;11
+	bit		0, a			;8
+	jr		NZ, get_byte3	;12 or 7
+get_byte2:
+	scf						;4 clear carry flag
+	ccf						;4
+	ld		a, 0			;7 just wasting clock cycles
+	ld		a, 0			;7
+	ld		a, 0			;7
+	jr		get_byte4		;12
+get_byte3:
+	scf						;4 set carry flag
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+get_byte4:
+	rr		c				;8 move data bit into storage
+	djnz	get_byte1		;13 or 8
+	ret						;10
+
+;**************************************************************
+;* uart_delay-One half bit delay
+;**************************************************************
+uart_delay:	;(time-1)*14+39
+	ld		a, (de)	;7
+uart_delay0:
+	dec		a				;4
+	jr		NZ, uart_delay0	;10 or 1
+	ret						;10
+	
+;**************************************************************
+;* delay-A short delay
+;**************************************************************
+delay:
+	djnz	delay		;13 or 8
+	ret					;10
+	
+;**************************************************************
+;* long_delay-A long delay
+;**************************************************************
+long_delay:
+	ld		a, 0
+long_delay0:
+	dec		a
+	jp		NZ, long_delay0
+	djnz	long_delay0	;13 or 8
+	ret					;10
+	
+;**************************************************************
+;* turn_on-sets white wire high
+;**************************************************************
+turn_on:
+	ld		a, 0D0h		;7 ld set white wire high
+    out		(0), a		;11
+	ret					;10
+	
+;**************************************************************
+;* turn_off-sets white wire low
+;**************************************************************
+turn_off:
+	ld		a, 0D2h		;7 set white wire low
+    out		(0), a		;11
+	ret					;10
+	
+.end
+.end

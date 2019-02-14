@@ -1,0 +1,245 @@
+;Serial stuff
+#define	baudrate	50
+#define	time		43
+
+;Input stuff
+#define BUFSIZE  48
+buffer	.db	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+buf_ptr  .EQU buffer + BUFSIZE + 1
+.nolist
+    #include    "ti83plus.inc"
+.list
+.org	$9D93
+.db		t2ByteTok, tAsmCmp
+status	.db 0
+
+start:
+	ld		HL, 0
+	call	turn_on			;Set up the serial line
+	DI						;OMFG COMMANDO TIME
+	
+	b_call(_ClrLCDFull)		;Clear the screen
+	
+	LD     A, 1
+    LD     (CurRow), A    ; Set row 1
+    LD     A, 1
+    LD     (CurCol), A    ; Set column 1
+	
+forever:
+	call	GetStr
+	call	send_string
+	b_call(_ClrLCDFull)		;Clear the screen
+	jr		forever
+	
+GetStr:
+    RES		AppTextSave, (IY + AppFlags)
+    
+	RES		ShiftAlpha, (IY + ShiftFlags)
+    LD		DE, buffer       ; Init pointer
+    LD		(buf_ptr), DE
+    XOR		A
+    LD		B, A             ; Init character counter
+    LD		(CurCol), A
+	
+KeyLoop:
+    b_call(_GetCSC)       ; Get a character.
+    OR    A               ; If no character received, restart
+    JR    Z, KeyLoop
+
+    CP    skEnter         ; If [ENTER] pressed, exit
+    JR    NZ, NotEnter
+
+    XOR   A               ; Null-terminate buffer
+    LD    (DE), A
+    RES   ShiftAlpha, (IY + ShiftFlags)    
+	RET
+
+NotEnter:
+	CP skAlpha 
+	JR NZ, NotAlpha 
+	LD HL, Flags + ShiftFlags 
+	LD A, (HL)
+	XOR 1 << ShiftAlpha ; Toggle state of ShiftAlpha flag 
+	LD (HL), A 
+	JR KeyLoop
+NotAlpha:
+    CP    skDel           ; If [DEL] key pressed, backspace
+    JR    NZ, NotDel
+
+    LD    A, B             ; See that there is a character to delete
+    OR    A
+    JR    Z, KeyLoop       ; If not, restart
+
+    LD    HL, CurCol       ; Save value of CurCol
+    LD    A, (HL)
+    DEC   (HL)            ; Decrement cursor column
+
+    OR    A               ; If original column was zero, should back up one row
+    JR    NZ, DidNotCrossLine
+    LD    (HL), 15         ; Set cursor to last column
+    DEC   HL              ; Go back one row
+    DEC   (HL)
+
+DidNotCrossLine:
+    DEC   DE              ; Backup one char in buffer
+    DEC   B               ; Decrease char counter
+    LD    A, ' '           ; Erase char on screen
+    b_call(_PutMap)       ; without affecting position
+    JR    KeyLoop
+    
+NotDel:
+    CP    skClear         ; If [CLEAR] pressed, everything must die!!!
+    JR    NZ, NotClear
+
+    LD    C, B             ; Divide characters input by 16
+    SRA   C               ; to determine how many rows the input spans
+    SRA   C
+    SRA   C
+    SRA   C
+
+    LD    HL, CurRow
+    LD    A, B             ; See if there are any characters to clear
+    OR    A
+    JR    Z, KeyLoop
+
+    LD    A, (HL)          ; Backup to the start of input
+    SUB   C
+    LD    C, A
+    LD    (HL), A
+
+    INC   HL              ; Go to first column
+    LD    (HL), 0
+    LD    A, ' '
+    
+ClearLoop:
+    b_call(_PutC)         ; Draw spaces to clear everything
+    DJNZ   ClearLoop      ; Will reset char counter
+
+    LD    (HL), B          ; Reset column to zero
+    DEC   HL              ; Reset row to original value
+    LD    (HL), C
+    LD    DE, buffer       ; Reset buffer pointer
+    JR    KeyLoop
+
+NotClear:
+    LD    C, A             ; Save input char temporarily
+    LD    A, B             ; See if at max characters input
+    CP    BUFSIZE
+    JR    Z, KeyLoop
+    LD    A, C             ; Restore char
+
+    SUB   skAdd           ; Throw out all keys below [+]
+    JR    C, KeyLoop
+    CP    skMath - skAdd + 1    ; Throw out all keys above [MATH]
+    JR    NC, KeyLoop
+
+    PUSH  DE              ; Convert scan code into character
+    LD    DE, CharTable
+	BIT ShiftAlpha, (IY + ShiftFlags) 
+	JR NZ, AlphaMode 
+	LD DE, NormTable 
+	
+AlphaMode:
+    LD    H, 0
+    LD    L, A
+    LD    DE, CharTable
+    ADD   HL, DE
+    LD    A, (HL)
+    POP   DE
+    b_call(_PutC)         ; Echo it
+
+    LD    (DE), A          ; Write char to buffer
+	INC DE ; Increment pointer
+    INC   B               ; Increment counter
+    JP    KeyLoop
+
+send_string:
+	ld		HL, buffer
+send_string0:
+	ld		a, (HL)
+	cp		0				;check if at end of string
+	ret		Z
+
+	ld		c, a			;send the character
+	call	send_byte
+	
+	jr		send_string0		;repeat
+	
+send_byte:
+	ld		a, c			;flip the byte's bits
+	xor		255
+	ld		c, a
+	
+	ld		b, 9			;counter
+	scf						;send start bit
+send_byte0:
+	jr		NC, send_byte1	;12 or 7
+	nop						;4
+	call	turn_off		;17 TOTAL: 45
+	cp		0				;7
+	cp		0				;7
+	cp		0				;7
+	jr		send_byte2		;12
+send_byte1:
+	call	turn_on			;17 TOTAL: 45
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+send_byte2:
+	ld		a, time			;7
+send_byte3:		;(time-1)*14+5
+	dec		a				;4
+	jp		NZ, send_byte3	;10 or 1
+	
+	sra		c				;8
+	djnz	send_byte0		;13 or 8 do it for all bits
+	nop						;4
+	nop						;4
+	nop						;4
+	nop						;4
+	
+	call	turn_on
+	
+	ld		b, 255
+	call	delay
+	
+	ret
+	
+delay:
+	djnz	delay		;13 or 8
+	ret					;10
+	
+long_delay:
+	ld		a, 0
+long_delay0:
+	dec		a
+	jp		NZ, long_delay0
+	djnz	long_delay0	;13 or 8
+	ret					;10
+	
+turn_on:
+	ld		a, 0D0h		;7 ld set white wire high
+    out		(0), a		;11
+	ret					;10
+	
+turn_off:
+	ld		a, 0D2h		;7 set white wire low
+    out		(0), a		;11
+	ret					;10
+	
+CharTable:
+.DB  $27, "WRMH", $FF, $FF        ; + - × ÷ ^ undefined
+.DB  "?", $5B, "VQLG", $FF, $FF    ; (-) 3 6 9 ) TAN VARS undefined
+.DB  ":ZUPKFC", $FF             ; . 2 5 8 ( COS PRGM STAT
+.DB  " YTOJEB", $FF, $FF         ; 0 1 4 7 , SIN APPS XT?n undefined
+.DB  "XSNIDA"                  ; STO LN LOG x2 x-1 MATH
+
+NormTable: .DB "+-*/^", $FF, $FF ; + - × ÷ ^ CLEAR undefined .DB "_369)", $C1, "]", $FF ; (-) 3 6 9 ) TAN VARS undefined .DB ".258({};" ; . 2 5 8 ( COS PRGM STAT .DB "0147, <>|", $FF ; 0 1 4 7 , SIN APPS XT?n undefined .DB $05, "!@#%&" ; STO LN LOG x2 x-1 MATH
+	
+.end
+.end

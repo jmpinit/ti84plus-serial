@@ -1,0 +1,98 @@
+.nolist
+    #include    "ti83plus.inc"
+.list
+.org    $9D93
+.db    t2ByteTok, tAsmCmp
+
+#define SEND_TIME	37
+
+;*****PROGRAM EXECUTION STARTS HERE
+
+start:
+	call	turn_on			;serial line default state
+	
+	b_call(_RclAns)			;get data from ans variable
+	b_call(_ConvOP1)		;get ans data into e
+	
+	ld		c, e			;send ans data
+	call	send_byte
+	
+	ret						;exit
+	
+;**************************************************************
+;* send_byte-sends a byte over serial
+;* input byte is in register C
+;* destroys a, b, c
+;**************************************************************
+send_byte:
+	ld		a, c			;flip the byte's bits (because lows mean 1 on serial line)
+	xor		255
+	ld		c, a
+	
+	ld		b, 9			;counter
+	scf						;start bit
+send_byte0:
+	jr		NC, send_byte1	;is it a one or a 0?
+	nop						;waste time
+	call	turn_off		;bring line low (send a 1)
+	cp		0				;waste cycles
+	cp		0
+	cp		0
+	jr		send_byte2		;skip the send 0 routine
+send_byte1:
+	call	turn_on			;bring line high (send a 0)
+	nop						;waste time
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+send_byte2:
+	ld		a, SEND_TIME	;delay time
+send_byte3:		;(time-1)*14+5
+	dec		a
+	jr		NZ, send_byte3
+	
+	sra		c				;get the next bit into carry
+	djnz	send_byte0		;we need to send all bits
+	nop						;waste time
+	nop
+	nop
+	nop
+	
+	call	turn_on			;bring line to default state (stop bit)
+	
+	ld		b, 255			;make sure we don't send new data too soon
+	call	delay
+	
+	ret
+	
+;**************************************************************
+;* delay-A short delay
+;**************************************************************
+delay:
+	djnz	delay		;13 or 8
+	ret					;10
+	
+;**************************************************************
+;* turn_on-sets white wire high
+;* destroys a
+;**************************************************************
+turn_on:
+	ld		a, 0D0h		;ld set white wire high
+    out		(0), a
+	ret
+	
+;**************************************************************
+;* turn_off-sets white wire low
+;* destroys a
+;**************************************************************
+turn_off:
+	ld		a, 0D2h		;set white wire low
+    out		(0), a
+	ret
+
+.end
+.end
